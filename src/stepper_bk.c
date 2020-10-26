@@ -5,9 +5,6 @@
 #include <math.h>
 #include <assert.h>
 #include <stdbool.h>
-#include <mpi.h>
-#include <omp.h>
-
 
 //ldoc on
 /**
@@ -160,7 +157,6 @@ void limited_deriv1(float* restrict du,
                     const float* restrict u,
                     int ncell)
 {
-    // TODO: add blocking 
     for (int i = 0; i < ncell; ++i)
         du[i] = limdiff(u[i-1], u[i], u[i+1]);
 }
@@ -173,7 +169,6 @@ void limited_derivk(float* restrict du,
                     int ncell, int stride)
 {
     assert(stride > 0);
-    // TODO: add blocking 
     for (int i = 0; i < ncell; ++i)
         du[i] = limdiff(u[i-stride], u[i], u[i+stride]);
 }
@@ -226,11 +221,9 @@ void central2d_predict(float* restrict v,
     float* restrict gy = scratch+nx;
     for (int k = 0; k < nfield; ++k) {
         for (int iy = 1; iy < ny-1; ++iy) {
-            // adjust offset and break fx, gy, f, g, ... into pieces
             int offset = (k*ny+iy)*nx+1;
             limited_deriv1(fx+1, f+offset, nx-2);
             limited_derivk(gy+1, g+offset, nx-2, nx);
-            // TODO: add blocking 
             for (int ix = 1; ix < nx-1; ++ix) {
                 int offset = (k*ny+iy)*nx+ix;
                 v[offset] = u[offset] - dtcdx2 * fx[ix] - dtcdy2 * gy[ix];
@@ -252,7 +245,6 @@ void central2d_correct_sd(float* restrict s,
                           float dtcdx2, float dtcdy2,
                           int xlo, int xhi)
 {
-    // TODO: add blocking similar to limiter functions
     for (int ix = xlo; ix < xhi; ++ix)
         s[ix] =
             0.2500f * (u [ix] + u [ix+1]) +
@@ -299,7 +291,6 @@ void central2d_correct(float* restrict v,
                              uk + ylo*nx, fk + ylo*nx, gk + ylo*nx,
                              dtcdx2, dtcdy2, xlo, xhi);
 
-        // TODO: add blocking 
         for (int iy = ylo; iy < yhi; ++iy) {
 
             float* tmp;
@@ -334,13 +325,13 @@ void central2d_step(float* restrict u, float* restrict v,
     float dtcdx2 = 0.5 * dt / dx;
     float dtcdy2 = 0.5 * dt / dy;
 
-    flux(f, g, u, nx_all * ny_all, nx_all * ny_all);
+    flux(f, g, u, nx_all * ny_all, nx_all * ny_all); // use u = (h, hu, hv) to update fluxes f(u) and g(u)
 
+    // predict the u values at a half step more.
+    // update v values, where v stores u values at half steps. 
     central2d_predict(v, scratch, u, f, g, dtcdx2, dtcdy2,
-                      nx_all, ny_all, nfield);
+                      nx_all, ny_all, nfield); 
 
-
-    // TODO: add blocking 
     // Flux values of f and g at half step
     for (int iy = 1; iy < ny_all-1; ++iy) {
         int jj = iy*nx_all+1;
@@ -384,14 +375,13 @@ int central2d_xrun(float* restrict u, float* restrict v,
     float t = 0;
     while (!done) {
         float cxy[2] = {1.0e-15f, 1.0e-15f};
-        central2d_periodic(u, nx, ny, ng, nfield); // fill in ghost cells in u
-        speed(cxy, u, nx_all * ny_all, nx_all * ny_all); // shallow2d_speed, update cxy
-        float dt = cfl / fmaxf(cxy[0]/dx, cxy[1]/dy); // adaptively compute dt to keep numerical stability
+        central2d_periodic(u, nx, ny, ng, nfield);
+        speed(cxy, u, nx_all * ny_all, nx_all * ny_all);
+        float dt = cfl / fmaxf(cxy[0]/dx, cxy[1]/dy);
         if (t + 2*dt >= tfinal) {
             dt = (tfinal-t)/2;
             done = true;
         }
-        // 
         central2d_step(u, v, scratch, f, g,
                        0, nx+4, ny+4, ng-2,
                        nfield, flux, speed,

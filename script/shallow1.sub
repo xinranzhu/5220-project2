@@ -1,8 +1,8 @@
 #!/bin/bash
 
 #SBATCH -J shallow
-#SBATCH -o shallow_%j.out
-#SBATCH -e shallow_%j.err
+#SBATCH -o /home/xz584/course/CS5220/shallow-water/jb_outputs/%j_o.txt    # Name of stdout output file(%j expands to jobId)
+#SBATCH -e /home/xz584/course/CS5220/shallow-water/jb_outputs/%j_e.txt   # Name of stderr output file(%j expands to jobId)
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --tasks-per-node=1
@@ -14,5 +14,5 @@
 
 source /etc/profile.d/modules.sh
 #module load openmpi-4.0.0
-cd $HOME/shallow-water
+cd /home/xz584/course/CS5220/shallow-water
 src/lshallow tests.lua dam 1000

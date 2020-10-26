@@ -1,0 +1,7 @@
+jb_outputs/
+*.gif
+*.png
+*.out
+script/
+src/lshallow
+*.o
