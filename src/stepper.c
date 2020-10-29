@@ -378,6 +378,21 @@ void central2d_step(float* restrict u, float* restrict v,
  * at the end lives on the main grid instead of the staggered grid.
  */
 
+#ifndef BATCH
+#define BATCH 10
+#endif
+
+static inline
+int compute_offset(int ny, int np){
+    // int ny_inner = ny / np;
+    int* offsets = (int*) malloc((np+1) * sizeof(int));
+    for (int i = 0; i <= np; ++i){
+        long r = i * ny;
+        offsets[i] = (int) (r/np);
+    }
+    return offsets
+}
+
 static
 int central2d_xrun(float* restrict u, float* restrict v,
                    float* restrict scratch,
