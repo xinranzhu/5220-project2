@@ -1,11 +1,11 @@
 #include "stepper.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <assert.h>
 #include <stdbool.h>
-#include <mpi.h>
 #include <omp.h>
 
 
@@ -155,18 +155,24 @@ float limdiff(float um, float u0, float up) {
 
 
 // Compute limited derivs
+// ncell = nx-2
 static inline
 void limited_deriv1(float* restrict du,
                     const float* restrict u,
                     int ncell)
 {
     // TODO: add blocking 
+    // #pragma omp parallel for shared(u, ncell) 
     for (int i = 0; i < ncell; ++i)
         du[i] = limdiff(u[i-1], u[i], u[i+1]);
 }
 
 
 // Compute limited derivs across stride
+// ncell = nx-2, stride = nx
+// limited_derivk(gy+1, g+offset, nx-2, nx);
+// limited_derivk(uy+1, uk+ylo*nx+1, nx-2, nx);
+// limited_derivk(uy+1, uk+(iy+1)*nx+1, nx-2, nx);
 static inline
 void limited_derivk(float* restrict du,
                     const float* restrict u,
@@ -174,6 +180,7 @@ void limited_derivk(float* restrict du,
 {
     assert(stride > 0);
     // TODO: add blocking 
+    // #pragma omp parallel for shared(u, stride, ncell) 
     for (int i = 0; i < ncell; ++i)
         du[i] = limdiff(u[i-stride], u[i], u[i+stride]);
 }
@@ -225,12 +232,14 @@ void central2d_predict(float* restrict v,
     float* restrict fx = scratch;
     float* restrict gy = scratch+nx;
     for (int k = 0; k < nfield; ++k) {
+        #pragma omp parallel for shared(fx, gy)
         for (int iy = 1; iy < ny-1; ++iy) {
             // adjust offset and break fx, gy, f, g, ... into pieces
             int offset = (k*ny+iy)*nx+1;
             limited_deriv1(fx+1, f+offset, nx-2);
             limited_derivk(gy+1, g+offset, nx-2, nx);
             // TODO: add blocking 
+            #pragma omp parallel for shared(fx, u, v, gy)
             for (int ix = 1; ix < nx-1; ++ix) {
                 int offset = (k*ny+iy)*nx+ix;
                 v[offset] = u[offset] - dtcdx2 * fx[ix] - dtcdy2 * gy[ix];
@@ -300,6 +309,7 @@ void central2d_correct(float* restrict v,
                              dtcdx2, dtcdy2, xlo, xhi);
 
         // TODO: add blocking 
+        // #pragma omp parallel for shared(ux, uy, uk, nx)
         for (int iy = ylo; iy < yhi; ++iy) {
 
             float* tmp;
@@ -377,34 +387,81 @@ int central2d_xrun(float* restrict u, float* restrict v,
                    int nfield, flux_t flux, speed_t speed,
                    float tfinal, float dx, float dy, float cfl)
 {
+    #pragma omp parallel
+    printf("Number of threads: %d \n", omp_get_num_threads());
+    printf("Current thread id: %d \n", omp_get_thread_num());
     int nstep = 0;
     int nx_all = nx + 2*ng;
     int ny_all = ny + 2*ng;
     bool done = false;
     float t = 0;
+
+    // NEW
+    int np = omp_get_max_threads();
+    int* offsets = compute_offset(int ny, int np);
+    int N = nx_all * nfield * (ny + 2 * ng * np * BATCH);
+    float* ulocal = (float*) malloc(N * sizeof(float));
+    float* vlocal = (float*) malloc(N * sizeof(float));
+    float* flocal = (float*) malloc(N * sizeof(float));
+    float* glocal = (float*) malloc(N * sizeof(float));
+    float* scratch_local = (float*) malloc((6 * nx_all * np) * sizeof(float));
+    int curr_step_in_batch = 0;
+    
+
     while (!done) {
-        float cxy[2] = {1.0e-15f, 1.0e-15f};
-        central2d_periodic(u, nx, ny, ng, nfield); // fill in ghost cells in u
-        speed(cxy, u, nx_all * ny_all, nx_all * ny_all); // shallow2d_speed, update cxy
-        float dt = cfl / fmaxf(cxy[0]/dx, cxy[1]/dy); // adaptively compute dt to keep numerical stability
+        if (curr_step_in_batch % BATCH == 0){
+            // TODO copy_out: copy inner correct part to global
+            // TODO copy_in: update ghost cell in local
+            central2d_periodic(u, nx, ny, ng, nfield);
+            // TODO: update ghost cells like above
+        }
+        // compute the global speed
+        float cx = 1.0e-15f, cy = 1.0e-15f;
+        #pragma omp parallel for private(cx,cy) reduction(max:cx, cy)
+        for (int i = 0; i < np; ++i)
+        {
+            float cxy[2] = {1.0e-15f, 1.0e-15f};
+            // TODO: get subdomain index from ulocal
+            speed(cxy, , nx_all * ny_all, nx_all * ny_all);
+            cx = cxy[0];
+            cy = cxy[1];
+        }
+        float dt = cfl / fmaxf(cx/dx, cy/dy);
         if (t + 2*dt >= tfinal) {
             dt = (tfinal-t)/2;
             done = true;
         }
-        // 
-        central2d_step(u, v, scratch, f, g,
-                       0, nx+4, ny+4, ng-2,
-                       nfield, flux, speed,
-                       dt, dx, dy);
-        central2d_step(v, u, scratch, f, g,
-                       1, nx, ny, ng,
-                       nfield, flux, speed,
-                       dt, dx, dy);
+        #pragma omp parallel for
+        for (int i = 0; i < np; ++i){
+            // TODO: get subdomain index from ulocal... and use correct ny
+            central2d_step(u, v, scratch, f, g,
+                        0, nx+4, ny+4, ng-2,
+                        nfield, flux, speed,
+                        dt, dx, dy);
+            central2d_step(v, u, scratch, f, g,
+                        1, nx, ny, ng,
+                        nfield, flux, speed,
+                        dt, dx, dy);
+        }
         t += 2*dt;
         nstep += 2;
+        curr_step_in_batch += 1;
+        if (done) {
+            // TODO copy_out: copy inner correct part to global
+        }
     }
+
+    // clean up and return
+    free(ulocal);
+    free(vlocal);
+    free(flocal);
+    free(glocal);
+    free(scratch_local);
+    free(offsets);
+    // END NEW 
     return nstep;
 }
+       
 
 
 int central2d_run(central2d_t* sim, float tfinal)
