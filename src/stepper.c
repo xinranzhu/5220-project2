@@ -379,7 +379,7 @@ void central2d_step(float* restrict u, float* restrict v,
  */
 
 #ifndef BATCH
-#define BATCH 10
+#define BATCH 1
 #endif
 
 static inline
@@ -449,18 +449,18 @@ void sub_copyin(float *restrict ulocal,
     // deal with the bottom pad
     if (own_end + BATCH * ng > ny) {
         // copy the normal part
-        if (ny - 1 - own_end > 0) {
+        if (ny - own_end > 0) {
             for (int j = 0; j < nfield; ++j) {
                 float *ul = ulocal + (own_end - own_start + BATCH * ng) * nx_all + field_stride_local * j;
                 float *ug = uglobal + field_stride_global * j + own_end * nx_all;
-                memcpy(ul, ug, (ny - 1 - own_end) * ng * nx_all * sizeof(float));
+                memcpy(ul, ug, (ny - own_end) * nx_all * sizeof(float));
             }
         }
         // copy the pariodic part
         for (int j = 0; j < nfield; ++j) {
-            float *ul = ulocal + (own_end - own_start + (BATCH + (ny - 1 - own_end)) * ng) * nx_all + field_stride_local * j;
+            float *ul = ulocal + (own_end - own_start + BATCH * ng + ny - own_end) * nx_all + field_stride_local * j;
             float *ug = uglobal + field_stride_global * j;
-            memcpy(ul, ug, (BATCH - (ny - 1 - own_end)) * ng * nx_all * sizeof(float));
+            memcpy(ul, ug, (BATCH * ng - (ny - own_end)) * nx_all * sizeof(float));
         }
     } else {
         for (int j = 0; j < nfield; ++j){
@@ -469,25 +469,40 @@ void sub_copyin(float *restrict ulocal,
             memcpy(ul, ug, BATCH * ng * nx_all * sizeof(float));
         }
     }
-
-    // int dstart = sub_start(own_start);
-    // int dend = sub_end(own_end, n);
-    // for (int j = 0; j < nfield; ++j)
-    //     memcpy(ulocal +,
-    //            uglobal + dstart + j * n,
-    //            (dend - dstart) * sizeof(float));
 }
 
 void sub_copyout(float *restrict ulocal,
                  float *restrict uglobal,
-                 int own_start, int own_end, int n)
+                 int own_start, int own_end,
+                 int nfield,
+                 int nx_all,
+                 int ny,
+                 int ng,
+                 int field_stride_local,
+                 int field_stride_global) {
+    for (int j = 0; j < nfield; ++j){
+        float *ul = ulocal + BATCH * ng * nx_all + field_stride_local * j;
+        float *ug = uglobal + field_stride_global * j + own_start * nx_all;
+        memcpy(ug, ul, (own_end - own_start) * nx_all * sizeof(float));
+    }
+}
+
+void sub_copyin_meat(float *restrict ulocal,
+                     float *restrict uglobal,
+                     int own_start, int own_end,
+                     int nfield,
+                     int nx_all,
+                     int ny,
+                     int ng,
+                     int field_stride_local,
+                     int field_stride_global)
 {
-    // int dstart = sub_start(own_start);
-    // int dend = sub_end(own_end, n);
-    // for (int j = 0; j < 3; ++j)
-    //     memcpy(uglobal + own_start + j*n,
-    //            ulocal + own_start - dstart + j*NS_TOTAL,
-    //            (own_end - own_start) * sizeof(float));
+    for (int j = 0; j < nfield; ++j)
+    {
+        float *ul = ulocal + BATCH * ng * nx_all + field_stride_local * j;
+        float *ug = uglobal + field_stride_global * j + own_start * nx_all;
+        memcpy(ul, ug, (own_end - own_start) * nx_all * sizeof(float));
+    }
 }
 
 static
@@ -514,50 +529,138 @@ int central2d_xrun(float* restrict u, float* restrict v,
     float* scratch_local = (float*) malloc((6 * nx_all * np) * sizeof(float));
     int curr_step_in_batch = 0;
 
+    // initialize ulocal
+    #pragma omp parallel for
+    for (int i = 0; i < np; ++i)
+    {
+        sub_copyin(ulocal + nx_all * nfield * (offsets[i] + 2 * i * ng * BATCH), // start from the ith subdomain
+                   u + nx_all * ng,                                              // ingore the ghost rows in uglobal
+                   offsets[i],
+                   offsets[i + 1],
+                   nfield,
+                   nx_all,
+                   ny,
+                   ng,
+                   nx_all * (2 * ng * BATCH + offsets[i + 1] - offsets[i]),
+                   nx_all * ny_all);
+        sub_copyin_meat(ulocal + nx_all * nfield * (offsets[i] + 2 * i * ng * BATCH), // start from the ith subdomain
+                        u + nx_all * ng,                                              // ingore the ghost rows in uglobal
+                        offsets[i],
+                        offsets[i + 1],
+                        nfield,
+                        nx_all,
+                        ny,
+                        ng,
+                        nx_all * (2 * ng * BATCH + offsets[i + 1] - offsets[i]),
+                        nx_all * ny_all);
+    }
+
     while (!done) {
         if (curr_step_in_batch % BATCH == 0){
-            // TODO copy_out: copy inner correct part to global
-            // TODO copy_in: update ghost cell in local
-            central2d_periodic(u, nx, ny, ng, nfield);
-            // TODO: update ghost cells like above
+            #pragma omp parallel for
+            for (int i = 0; i < np; ++i){
+                sub_copyout(ulocal + nx_all * nfield * (offsets[i] + 2 * i * ng * BATCH), // start from the ith subdomain
+                            u + nx_all * ng, // ingore the ghost rows in uglobal
+                            offsets[i],
+                            offsets[i + 1],
+                            nfield,
+                            nx_all,
+                            ny,
+                            ng,
+                            nx_all * (2 * ng * BATCH + offsets[i + 1] - offsets[i]),
+                            nx_all * ny_all);
+                sub_copyin(ulocal + nx_all * nfield * (offsets[i] + 2 * i * ng * BATCH), // start from the ith subdomain
+                           u + nx_all * ng, // ingore the ghost rows in uglobal
+                           offsets[i],
+                           offsets[i + 1],
+                           nfield,
+                           nx_all,
+                           ny,
+                           ng,
+                           nx_all * (2 * ng * BATCH + offsets[i + 1] - offsets[i]),
+                           nx_all * ny_all);
+            }
+        }
+        central2d_periodic(u, nx, ny, ng, nfield);
+        // compute periodic on each subdomain on x
+        #pragma omp parallel for
+        for (int i = 0; i < np; ++i){
+            central2d_periodic_x(ulocal + nx_all * nfield * (offsets[i] + (2 * i) * ng * BATCH),
+                                 nx, offsets[i + 1] - offsets[i] + 2 * ng * BATCH, ng, nfield,
+                                 nx_all * (2 * ng * BATCH + offsets[i + 1] - offsets[i]));
         }
         // compute the global speed with barriers
-        float cx = 1.0e-15f, cy = 1.0e-15f;
-        #pragma omp parallel for private(cx,cy) reduction(max:cx, cy)
-        for (int i = 0; i < np; ++i)
-        {
-            float cxy[2] = {1.0e-15f, 1.0e-15f};
-            speed(
-                cxy,
-                ulocal + nx_all * nfield * (offsets[i] + (i * 2 + 1) * ng * BATCH), // the meat of ith subdomain
-                nx_all * (offsets[i+1] - offsets[i]),
-                nx_all * (offsets[i+1] - offsets[i] + 2 * ng * BATCH));
-            cx = cxy[0];
-            cy = cxy[1];
-        }
-        float dt = cfl / fmaxf(cx/dx, cy/dy);
+        // for (int i = 0; i <= np; ++i) {
+        //     printf("offsets[%d] = %d\n", i, offsets[i]);
+        // }
+
+        // float cx = 1.0e-15f, cy = 1.0e-15f;
+        // #pragma omp parallel for reduction(max:cx, cy)
+        // for (int i = 0; i < np; ++i)
+        // {
+        //     float cxy[2] = {1.0e-15f, 1.0e-15f};
+        //     speed(
+        //         cxy,
+        //         ulocal + nx_all * nfield * (offsets[i] + (i * 2 + 1) * ng * BATCH), // the meat of ith subdomain
+        //         nx_all * (offsets[i+1] - offsets[i]),
+        //         nx_all * (offsets[i+1] - offsets[i] + 2 * ng * BATCH));
+        //     cx = cxy[0];
+        //     cy = cxy[1];
+        //     printf("%d: %e, %e\n", i, cxy[0], cxy[1]);
+        // }
+        // float dt = cfl / fmaxf(cx/dx, cy/dy);
+        // printf("%e, %e\n", cx, cy);
+
+
+        float cxy[2] = {1.0e-15f, 1.0e-15f};
+        speed(cxy, u, nx_all * ny_all, nx_all * ny_all);
+        float dt = cfl / fmaxf(cxy[0] / dx, cxy[1] / dy);
+        // printf("%f\n", dt);
+
         if (t + 2*dt >= tfinal) {
             dt = (tfinal-t)/2;
             done = true;
         }
         #pragma omp parallel for
         for (int i = 0; i < np; ++i){
-            // TODO: update the x ghost cells like central2d_periodic(u, nx, ny, ng, nfield);
-            // TODO: get subdomain index from ulocal... and use correct ny
-            central2d_step(u, v, scratch, f, g,
-                        0, nx+4, ny+4, ng-2,
-                        nfield, flux, speed,
-                        dt, dx, dy);
-            central2d_step(v, u, scratch, f, g,
-                        1, nx, ny, ng,
-                        nfield, flux, speed,
-                        dt, dx, dy);
+            int offset_local = nx_all * nfield * (offsets[i] + i * 2 * ng * BATCH);
+            central2d_step(ulocal + offset_local,
+                           vlocal + offset_local,
+                           scratch_local + 6 * nx_all * i,
+                           flocal + offset_local,
+                           glocal + offset_local,
+                           0,
+                           nx + 4,
+                           offsets[i + 1] - offsets[i] + 4,
+                           ng - 2, nfield, flux, speed, dt, dx, dy);
+            central2d_step(vlocal + offset_local,
+                           ulocal + offset_local,
+                           scratch_local + 6 * nx_all * i,
+                           flocal + offset_local,
+                           glocal + offset_local,
+                           1,
+                           nx,
+                           offsets[i + 1] - offsets[i],
+                           ng,
+                           nfield, flux, speed, dt, dx, dy);
         }
         t += 2*dt;
         nstep += 2;
         curr_step_in_batch += 1;
         if (done) {
-            // TODO copy_out: copy inner correct part to global
+            #pragma omp parallel for
+            for (int i = 0; i < np; ++i){
+                sub_copyout(ulocal + nx_all * nfield * (offsets[i] + 2 * i * ng * BATCH), // start from the ith subdomain
+                            u + nx_all * ng,                                              // ingore the ghost rows in uglobal
+                            offsets[i],
+                            offsets[i + 1],
+                            nfield,
+                            nx_all,
+                            ny,
+                            ng,
+                            nx_all * (2 * ng * BATCH + offsets[i + 1] - offsets[i]),
+                            nx_all * ny_all);
+            }
         }
     }
 
