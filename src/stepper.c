@@ -112,7 +112,30 @@ void central2d_periodic(float* restrict u,
     }
 }
 
+/**
+ * Do left and right periodic BC only
+ * This is for updating x BC for subdomains
+ */
 
+void central2d_periodic_x(float *restrict u,
+                        int nx, int ny, int ng, int nfield,
+                        int field_stride)
+{
+    // Stride and number per field
+    int s = nx + 2 * ng;
+
+    // Offsets of left, right, top, and bottom data blocks and ghost blocks
+    int l = nx, lg = 0;
+    int r = ng, rg = nx + ng;
+
+    // Copy data into ghost cells on each side
+    for (int k = 0; k < nfield; ++k)
+    {
+        float *uk = u + k * field_stride;
+        copy_subgrid(uk + lg, uk + l, ng, ny, s);
+        copy_subgrid(uk + rg, uk + r, ng, ny, s);
+    }
+}
 /**
  * ### Derivatives with limiters
  *
