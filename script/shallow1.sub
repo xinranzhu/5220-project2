@@ -14,7 +14,7 @@
 source /etc/profile.d/modules.sh
 # module load openmpi-4.0.0
 set -x
-export OMP_NUM_THREADS=6
+export OMP_NUM_THREADS=2
 export OMP_PLACES=threads
 
 cd /home/xz584/course/CS5220/shallow-water
@@ -25,12 +25,14 @@ cd /home/xz584/course/CS5220/shallow-water
 # src/lshallow tests.lua dam 800
 
 testname='dam'
+
+expid='0'
 for BATCH in {1..11..2}
 do
     make clean
     make PLATFORM=graphite  BATCH=${BATCH}
     for framesize in 500 1000 1500 2000 2500
     do
-        src/lshallow tests.lua ${testname} ${framesize} 2>&1 | tee a.out_${testname}_size${framesize}_thread${OMP_NUM_THREADS}
+        src/lshallow tests.lua ${testname} ${framesize} 2>&1 | tee a.out_${testname}_size${framesize}_thread${OMP_NUM_THREADS}_exp${expid}
     done
 done
