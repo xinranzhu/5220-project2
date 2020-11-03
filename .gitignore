@@ -5,3 +5,5 @@ jb_outputs/
 script/
 src/lshallow
 *.o
+dam_*.txt
+script/shallow1.sub

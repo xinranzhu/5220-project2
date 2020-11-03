@@ -3,16 +3,21 @@
 #SBATCH -J shallow
 #SBATCH -o /home/xz584/course/CS5220/shallow-water/jb_outputs/%j_o.txt    # Name of stdout output file(%j expands to jobId)
 #SBATCH -e /home/xz584/course/CS5220/shallow-water/jb_outputs/%j_e.txt   # Name of stderr output file(%j expands to jobId)
-#SBATCH --nodes=1
-#SBATCH --ntasks=1
+#SBATCH --nodes=4
+#SBATCH --ntasks=4
 #SBATCH --tasks-per-node=1
 #SBATCH --cpus-per-task=1
 #SBATCH --get-user-env
-#SBATCH -t 00:10:00
 #SBATCH --mem-per-cpu=1000
 #SBATCH --partition=cs5220
 
 source /etc/profile.d/modules.sh
-#module load openmpi-4.0.0
+# module load openmpi-4.0.0
+set -x
+export OMP_NUM_THREADS=1
+export OMP_PLACES=threads
+
 cd /home/xz584/course/CS5220/shallow-water
-src/lshallow tests.lua dam 1000
+make clean
+make PLATFORM=graphite
+src/lshallow tests.lua dam 800
