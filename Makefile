@@ -1,10 +1,11 @@
 PLATFORM=gcc
 include config/Makefile.in.$(PLATFORM)
+BATCH=1
 
 .PHONY: src/lshallow
 
 src/lshallow:
-	( cd src ; make PLATFORM=$(PLATFORM) )
+	( cd src ; make PLATFORM=$(PLATFORM) BATCH=${BATCH})
 
 # ===
 # Run small or big version

@@ -553,13 +553,13 @@ int central2d_xrun(float* restrict u, float* restrict v,
     float t = 0;
     int np = omp_get_max_threads();
     int* offsets = compute_offset(ny, np);
-    // printf("BATCH = %d, ", BATCH);
-    // printf("np = %d, ", np);
-    // printf("offsets = [%d", offsets[0]);
-    // for (int i = 1; i <= np; ++i){
-    //     printf(", %d", offsets[i]);
-    // }
-    // printf("]\n");
+    printf("BATCH = %d, ", BATCH);
+    printf("np = %d, ", np);
+    printf("offsets = [%d", offsets[0]);
+    for (int i = 1; i <= np; ++i){
+        printf(", %d", offsets[i]);
+    }
+    printf("]\n");
     int N = nx_all * nfield * (ny + 2 * ng * np * BATCH);
     float* ulocal = (float*) malloc(N * sizeof(float));
     float* vlocal = (float*) malloc(N * sizeof(float));
@@ -578,7 +578,7 @@ int central2d_xrun(float* restrict u, float* restrict v,
 
     // initialize ulocal
     // central2d_periodic(u, nx, ny, ng, nfield);
-#pragma omp parallel for
+// #pragma omp parallel for
     for (int i = 0; i < np; ++i)
     {
         sub_copyin(ulocal + nx_all * nfield * (offsets[i] + 2 * i * ng * BATCH), // start from the ith subdomain

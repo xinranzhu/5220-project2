@@ -3,8 +3,8 @@
 #SBATCH -J shallow
 #SBATCH -o /home/xz584/course/CS5220/shallow-water/jb_outputs/%j_o.txt    # Name of stdout output file(%j expands to jobId)
 #SBATCH -e /home/xz584/course/CS5220/shallow-water/jb_outputs/%j_e.txt   # Name of stderr output file(%j expands to jobId)
-#SBATCH --nodes=4
-#SBATCH --ntasks=4
+#SBATCH --nodes=2
+#SBATCH --ntasks=2
 #SBATCH --tasks-per-node=1
 #SBATCH --cpus-per-task=1
 #SBATCH --get-user-env
@@ -14,10 +14,23 @@
 source /etc/profile.d/modules.sh
 # module load openmpi-4.0.0
 set -x
-export OMP_NUM_THREADS=1
+export OMP_NUM_THREADS=6
 export OMP_PLACES=threads
 
 cd /home/xz584/course/CS5220/shallow-water
-make clean
-make PLATFORM=graphite
-src/lshallow tests.lua dam 800
+
+
+# make clean
+# make PLATFORM=graphite  BATCH=5
+# src/lshallow tests.lua dam 800
+
+testname='dam'
+for BATCH in {1..11..2}
+do
+    make clean
+    make PLATFORM=graphite  BATCH=${BATCH}
+    for framesize in 500 1000 1500 2000 2500
+    do
+        src/lshallow tests.lua ${testname} ${framesize} 2>&1 | tee a.out_${testname}_size${framesize}_thread${OMP_NUM_THREADS}
+    done
+done

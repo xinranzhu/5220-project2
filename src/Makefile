@@ -1,6 +1,7 @@
 PLATFORM=gcc
 include ../config/Makefile.in.$(PLATFORM)
-
+BATCH=1
+CFLAGS+=-DBATCH=${BATCH}
 # ===
 # Main driver and sample run
 
